@@ -1,0 +1,161 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Alex y Naiara en el laberinto</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#efe6ff;--fg:#2a1a4a;--card:#fff;--ac:#7a3cff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#150d26;--fg:#f0e8ff;--card:#241640;--ac:#a98bff}}
+:root[data-theme="dark"]{--bg:#150d26;--fg:#f0e8ff;--card:#241640;--ac:#a98bff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:"Courier New",monospace;text-align:center}
+main{max-width:960px;margin:0 auto;padding:8px}
+h1{font-size:clamp(20px,5vw,34px);margin:8px 0;letter-spacing:2px;text-shadow:3px 3px 0 var(--ac)}
+.card{background:var(--card);border:4px solid var(--ac);padding:12px;margin:8px auto;max-width:640px}
+button,input,textarea{font:inherit;padding:8px 12px;margin:3px;border:3px solid var(--ac);background:var(--card);color:var(--fg)}textarea{width:90%;font-size:11px}
+button{cursor:pointer;font-weight:bold}button:disabled{opacity:.35}
+#lg{display:grid;grid-template-columns:repeat(10,1fr);gap:3px}#lg button{padding:6px 0;margin:0}
+canvas{width:100%;max-width:960px;image-rendering:pixelated;border:4px solid var(--ac);background:#1b1030;display:block;margin:0 auto}
+#tc{display:flex;justify-content:center;gap:10px;margin-top:8px}#tc button{width:30%;font-size:22px;padding:14px;touch-action:none;user-select:none}
+#info{min-height:1.2em;font-size:14px}
+</style></head><body><main>
+<h1>ALEX y NAIARA<br><small>en el laberinto</small></h1>
+<div id="menu" class="card">
+<p>🔥 <b>Alex</b> (fuego) y 💧 <b>Naiara</b> (agua) deben llegar juntos a sus puertas. Alex cruza lava y Naiara agua, pero el otro no. El verde (goo) mata a los dos. Los botones abren puertas y puentes del mismo color: ¡cooperad!</p>
+<button id="bl">Jugar en local (mismo teclado)</button><br><small>Alex: W A D · Naiara: flechas · R reinicia</small>
+<hr>
+<b>Online</b><br><input id="rc" placeholder="código de sala (opcional)" maxlength="20" size="24"><br>
+
+
+<button id="bo">🔥 Soy Alex</button> <button id="bn">💧 Soy Naiara</button>
+<p id="info"></p><small>Escribid el mismo código de sala (o dejadlo vacío) y cada uno pulsa su personaje. Si Naiara entra antes, esperará a que llegue Alex.</small>
+<hr><b>Niveles</b><div id="lg"></div></div>
+<div id="game" hidden>
+<div><b id="hud"></b> <button id="br">↻ Reiniciar</button><button id="bm">Menú</button></div>
+<canvas id="c" width="640" height="280"></canvas>
+<div id="tc" hidden><button data-k="l">◀</button><button data-k="j">▲</button><button data-k="r">▶</button></div>
+</div></main>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const T=20,H=14,FY=11,VW=640,$=i=>document.getElementById(i),cx=$('c').getContext('2d');
+let G,ID,W,lvl=1,btns=[],pr=[],tm=0,mode='local',role=0,room=null,remote=null,msg='',msgT=0,running=0,winT=0,deadT=0,myrs=0,remRs,lastSend=0,exA,exN,mx=1,last=0,code='';
+try{mx=+localStorage.getItem('an_max')||1}catch(e){}
+const inp=[{l:0,r:0,j:0},{l:0,r:0,j:0}];
+const pl=[{r:0,x:0,y:0,vx:0,vy:0,on:0,f:1,ex:0},{r:1,x:0,y:0,vx:0,vy:0,on:1,f:-1,ex:0}];
+const SA=[" hhhhh ","hhhhhhh","gwgsgwg"," sssss ","rrrrrrr","rrrrrrr"," rrrrr "," ppppp "," pp pp "," dd dd "];
+const SN=[" hhyhh ","hhyhhhh","hsesesh","hsssssh","hbbbbbh","hbbbbbh"," bbbbb "," bbbbb "," ss ss "," dd dd "];
+const PA={h:'#6b3f1d',g:'#1a1a1a',w:'#cfeaff',s:'#f3c9a0',r:'#ff6a2b',p:'#3b3b6b',d:'#222'};
+const PN={h:'#d2552a',y:'#f6dc6a',e:'#222',s:'#f3c9a0',b:'#3aa0ff',d:'#222'};
+const HINT={1:'Alex cruza la lava, Naiara el agua. ¡Saltad lo prohibido!',2:'Un botón abre la puerta de su color: uno pisa, otro pasa',3:'Pisad el botón del otro lado: sube el puente',4:'Cooperad: la puerta se cierra si soltáis el botón'};
+const rnd=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+function build(k){
+ const R=rnd(k*977+13),ri=(a,b)=>a+Math.floor(R()*(b-a+1));
+ G=[];ID=[];btns=[];for(let r=0;r<H;r++){G.push(new Uint8Array(200));ID.push(new Uint8Array(200))}
+ let x=1,n=0;
+ const set=(c,r,t,i)=>{G[r][c]=t;ID[r][c]=i||0},floor=(c,h)=>{for(let r=FY-h;r<H;r++)set(c,r,1)},flat=m=>{for(let i=0;i<m;i++)floor(x++,0)};
+ const btn=(c,h,i)=>{set(c,FY-h-1,7,i);btns.push({c,r:FY-h-1,id:i})};
+ const pool=(t,w)=>{flat(1);for(let i=0;i<w;i++){floor(x,0);set(x,FY,t);x++}flat(1)};
+ const hill=h=>{(h==1?[1,1,1,1,0]:[1,2,2,2,2,1,0]).forEach(v=>floor(x++,v))};
+ const gate=ped=>{const i=++n;flat(1);for(let s=0;s<2;s++){if(ped){floor(x,2);floor(x+1,2);btn(x+1,2,i);x+=2}else{floor(x,0);btn(x,0,i);x++}flat(2);if(!s){floor(x,0);for(let r=2;r<FY;r++)set(x,r,5,i);x++;flat(2)}}flat(1)};
+ const bridge=(t,w)=>{const i=++n;flat(2);for(let c=0;c<w;c++){floor(x,0);set(x,FY,6,i);set(x,12,t);x++}flat(1);floor(x,0);btn(x,0,i);x++;flat(2)};
+ flat(4);
+ if(k==1){pool(2,2);pool(3,2)}else if(k==2){gate(0);pool(2,3)}else if(k==3){bridge(2,5);pool(3,2)}else if(k==4){hill(2);gate(0);bridge(3,5)}
+ else for(let j=0,m=Math.min(8,3+((k-1)/5|0));j<m;j++){const p=R();
+  if(p<.32)gate(k>10&&R()<.5);else if(p<.57)bridge(R()<.5?2:3,ri(5,k>14?8:6));else if(p<.82)pool(k>5&&R()<.3?4:R()<.5?2:3,ri(2,k>7?3:2));else hill(R()<.5?1:2)}
+ flat(2);exA=x;floor(x++,0);set(exA,FY-1,8);set(exA,FY-2,8);flat(1);exN=x;floor(x++,0);set(exN,FY-1,9);set(exN,FY-2,9);flat(2);W=x+1;
+ for(let r=0;r<H;r++){G[r][0]=1;G[r][W-1]=1}for(let c=0;c<W;c++){G[0][c]=1;G[1][c]=1}
+}
+const solid=(c,r)=>{if(c<0||c>=W||r<0||r>=H)return 1;const t=G[r][c];return t==1||(t==5&&!pr[ID[r][c]])||(t==6&&pr[ID[r][c]])};
+function hit(x,y){for(let c=Math.floor(x/T);c<=Math.floor((x+13.99)/T);c++)for(let r=Math.floor(y/T);r<=Math.floor((y+18.99)/T);r++)if(solid(c,r))return 1;return 0}
+function mv(p,dx,dy){
+ for(let m=Math.abs(dx),s=Math.sign(dx);m>0;m--){const d=Math.min(1,m)*s;if(hit(p.x+d,p.y)&&!hit(p.x,p.y))break;p.x+=d}
+ p.on=0;for(let m=Math.abs(dy),s=Math.sign(dy);m>0;m--){const d=Math.min(1,m)*s;if(hit(p.x,p.y+d)&&!hit(p.x,p.y)){if(s>0)p.on=1;p.vy=0;break}p.y+=d}
+}
+function bad(p){for(let c=Math.floor((p.x+2)/T);c<=Math.floor((p.x+11)/T);c++)for(let r=Math.floor((p.y+3)/T);r<=Math.floor((p.y+17)/T);r++){if(r<0||r>=H||c<0||c>=W)continue;const t=G[r][c];if(t==4||t==(p.r?2:3))return 1}return 0}
+function reset(){const y=FY*T-19;pl[0].x=2*T+3;pl[1].x=4*T+3;pl.forEach(p=>{p.y=y;p.vx=p.vy=0;p.ex=0;p.dead=0});deadT=0;winT=0}
+function load(k){lvl=k;build(k);reset();msg=HINT[k]||'Nivel '+k;msgT=3;if(k>mx){mx=k;try{localStorage.setItem('an_max',mx)}catch(e){}}}
+function restart(){myrs++;reset();send(1)}
+function send(f){if(!room)return;const n=performance.now();if(!f&&n-lastSend<70)return;lastSend=n;const p=pl[role];room.presence({r:role,x:Math.round(p.x),y:Math.round(p.y),f:p.f,e:p.ex?1:0,lv:lvl,rs:myrs}).catch(()=>{})}
+function update(dt){
+ pr=[];for(const b of btns)for(const p of pl)if(p.x+14>b.c*T&&p.x<b.c*T+T&&p.y+19>b.r*T+12&&p.y<b.r*T+T)pr[b.id]=1;
+ const o=1-role;
+ if(room&&remote){const q=remote;if(q.lv>lvl&&!winT)load(q.lv);if(q.rs!==undefined){if(remRs!==undefined&&q.rs!==remRs)reset();remRs=q.rs}
+  if(q.r!==role&&q.x!==undefined){const p=pl[o];if(Math.abs(q.x-p.x)>90||Math.abs(q.y-p.y)>90){p.x=q.x;p.y=q.y}else{p.x+=(q.x-p.x)*.4;p.y+=(q.y-p.y)*.4}p.f=q.f||1;p.ex=q.e}}
+ for(const p of pl){if(room&&p.r!=role)continue;const i=inp[p.r];
+  p.vy=Math.min(p.vy+1400*dt,600);if(i.j&&p.on&&!deadT)p.vy=-425;p.vx=deadT?0:(i.r-i.l)*130;if(p.vx)p.f=Math.sign(p.vx);
+  mv(p,p.vx*dt,p.vy*dt);
+  p.ex=!deadT&&p.on&&Math.floor((p.x+7)/T)==(p.r?exN:exA)?1:0;
+  if(!deadT&&(bad(p)||p.y>H*T)){deadT=.7;msg='¡Ay! Reintentando…';msgT=1}}
+ if(deadT){deadT-=dt;if(deadT<=0)restart()}
+ send();
+ if(!winT&&pl[0].ex&&pl[1].ex)winT=.9;
+ if(winT){winT-=dt;if(winT<=0){if(lvl>=30){msg='¡LO CONSEGUISTEIS! ❤ 30/30';msgT=99;running=0;setTimeout(menu,3500)}else load(lvl+1);send(1)}}
+ if(msgT>0)msgT-=dt;
+ $('hud').textContent='Nivel '+lvl+'/30'+(room?' · sala '+code+(remote?' · pareja conectada':' · esperando pareja…'):'');
+}
+const hs=i=>'hsl('+i*67%360+',75%,60%)';
+function tile(t,c,r,ox){const x=c*T-ox,y=r*T,id=ID[r][c];
+ if(t==1){cx.fillStyle='#34255c';cx.fillRect(x,y,T,T);cx.fillStyle=r>1&&G[r-1][c]!=1?'#5a45a0':'#46347c';cx.fillRect(x,y,T,2);cx.fillStyle='#241845';cx.fillRect(x,y+9,T,2);cx.fillRect(x+(r&1?5:14),y,2,9);cx.fillRect(x+(r&1?14:5),y+11,2,9)}
+ else if(t>=2&&t<=4){const col=['','','#ff5a1f','#2d8cff','#4ee04a'][t],w=Math.round(Math.sin(tm*4+c)*2);cx.fillStyle=col;cx.fillRect(x,y+3,T,T-3);cx.fillRect(x,y+1+w,T,3);cx.fillStyle='rgba(255,255,255,.45)';cx.fillRect(x+2,y+6+w,6,2);cx.fillRect(x+11,y+10-w,6,2)}
+ else if(t==5){if(pr[id]){cx.fillStyle=hs(id);cx.globalAlpha=.25;cx.fillRect(x+8,y,4,T);cx.globalAlpha=1}else{cx.fillStyle=hs(id);cx.fillRect(x+2,y,5,T);cx.fillRect(x+13,y,5,T);cx.fillStyle='#fff6';cx.fillRect(x+2,y,2,T)}}
+ else if(t==6){cx.fillStyle=hs(id);if(pr[id]){cx.fillRect(x,y,T,6);cx.fillStyle='#0004';cx.fillRect(x+9,y,2,6)}else{cx.globalAlpha=.4;cx.fillRect(x+8,y,4,2);cx.globalAlpha=1}}
+ else if(t==7){const q=pr[id];cx.fillStyle='#555';cx.fillRect(x+2,y+16,16,4);cx.fillStyle=hs(id);cx.fillRect(x+4,y+(q?18:13),12,q?2:4)}
+ else if(t>=8){cx.fillStyle=t==8?'#ff6a2b':'#3aa0ff';cx.fillRect(x+1,y,18,T);cx.fillStyle='#120a22';cx.fillRect(x+4,y+(G[r-1][c]==t?0:4),12,T)}
+}
+function spr(S,P,x,y,f){for(let r=0;r<10;r++)for(let c=0;c<7;c++){const ch=S[r][f<0?6-c:c];if(ch!=' '){cx.fillStyle=P[ch];cx.fillRect(Math.round(x)+c*2,Math.round(y)-1+r*2,2,2)}}}
+function draw(){
+ cx.fillStyle='#1b1030';cx.fillRect(0,0,VW,H*T);
+ for(let i=0;i<30;i++){cx.fillStyle='#2e1f52';cx.fillRect((i*97)%VW,(i*53)%180+30,3,3)}
+ const mid=room?pl[role].x:(pl[0].x+pl[1].x)/2,ox=Math.round(Math.max(0,Math.min(W*T-VW,mid-VW/2)));
+ for(let c=Math.floor(ox/T);c<=Math.min(W-1,Math.floor((ox+VW)/T));c++)for(let r=0;r<H;r++){const t=G[r][c];if(t)tile(t,c,r,ox)}
+ for(const p of pl){if(deadT&&!room&&0)continue;cx.globalAlpha=deadT&&Math.floor(tm*20)%2?.3:1;p.r?spr(SN,PN,p.x-ox,p.y,p.f):spr(SA,PA,p.x-ox,p.y,p.f)}
+ cx.globalAlpha=1;
+ if(msgT>0){cx.fillStyle='#000a';cx.fillRect(0,6,VW,22);cx.fillStyle='#fff';cx.font='bold 13px "Courier New",monospace';cx.textAlign='center';cx.fillText(msg,VW/2,22)}
+}
+function frame(n){const dt=Math.min(.033,(n-last)/1000||0);last=n;tm+=dt;if(running){update(dt);draw()}requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+function menu(){running=0;$('game').hidden=1;$('menu').hidden=0;lg()}
+function start(k){$('menu').hidden=1;$('game').hidden=0;$('tc').hidden=mode!='online';inp.forEach(i=>i.l=i.r=i.j=0);load(k);running=1}
+function lg(){const g=$('lg');g.innerHTML='';for(let k=1;k<=30;k++){const b=document.createElement('button');b.textContent=k;b.disabled=k>mx;b.onclick=()=>{mode=room?'online':'local';start(k)};g.appendChild(b)}}
+$('bl').onclick=()=>{mode='local';leaveNet();pl.forEach(p=>p.rem=0);start(1)};
+$('bm').onclick=menu;$('br').onclick=()=>running&&restart();
+const KM={a:[0,'l'],d:[0,'r'],w:[0,'j'],ArrowLeft:[1,'l'],ArrowRight:[1,'r'],ArrowUp:[1,'j'],' ':[1,'j']};
+function key(e,v){if(e.target.tagName=='INPUT')return;const k=e.key.length==1?e.key.toLowerCase():e.key;
+ if(v&&running){if(k=='r')return restart();if(k=='Escape')return menu()}
+ const m=KM[k];if(!m)return;e.preventDefault();inp[room?role:m[0]][m[1]]=v?1:0}
+addEventListener('keydown',e=>key(e,1));addEventListener('keyup',e=>key(e,0));
+document.querySelectorAll('#tc button').forEach(b=>{const k=b.dataset.k;b.onpointerdown=e=>{e.preventDefault();inp[role][k]=1};['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,()=>inp[role][k]=0))});
+
+/* ===== ONLINE con PeerJS (funciona en GitHub Pages) ===== */
+let peer=null,conn=null,base='';
+const PO={serialization:'json'};
+function leaveNet(){try{peer&&peer.destroy()}catch(e){}peer=null;conn=null;room=null;remote=null}
+function wire(c){
+ c.on('open',()=>{conn=c;remote=null;remRs=undefined;$('info').textContent='';send(1)});
+ c.on('data',d=>{remote=d});
+ c.on('close',()=>{if(conn===c)conn=null;remote=null;msg='Tu pareja se ha desconectado';msgT=4;if(role==1)setTimeout(dial,2000)});
+}
+function dial(){if(!peer||role!=1||(conn&&conn.open))return;wire(peer.connect(base+'-a',PO))}
+function join(r){
+ const info=$('info');
+ if(typeof Peer=='undefined'){info.textContent='No se pudo cargar PeerJS (¿sin internet?). Juega en local.';return}
+ leaveNet();role=r;
+ code=($('rc').value.toLowerCase().replace(/[^a-z0-9]/g,'')||'nuestra');base='alexnaiara-'+code;
+ info.textContent='Conectando…';
+ const p=peer=new Peer(r==0?base+'-a':undefined);
+ p.on('open',()=>{
+  if(peer!==p)return;
+  room={presence:o=>{if(conn&&conn.open)conn.send(o);return Promise.resolve()},leave:()=>Promise.resolve()};
+  remote=null;remRs=undefined;mode='online';info.textContent='';start(1);
+  if(r==1)dial();
+ });
+ p.on('connection',c=>{if(r==0){if(conn&&conn.open)try{conn.close()}catch(e){}wire(c)}});
+ p.on('error',e=>{
+  if(peer!==p)return;
+  if(e.type=='peer-unavailable'){if(r==1)setTimeout(dial,2000)}
+  else if(e.type=='unavailable-id'){leaveNet();info.textContent='Ya hay un Alex conectado en esa sala. Cambia el código de sala.'}
+  else{info.textContent='Error de conexión ('+e.type+'). Prueba en local.'}
+ });
+ p.on('disconnected',()=>{try{p.reconnect()}catch(e){}});
+}
+$('bo').onclick=()=>join(0);$('bn').onclick=()=>join(1);
+lg();
+</script></body></html>
